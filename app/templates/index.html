@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>货币基金折价套利监控</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+        header p {
+            opacity: 0.8;
+        }
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        .card-header h2 {
+            font-size: 1.3rem;
+            color: #333;
+        }
+        .card-header .code {
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+        }
+        .data-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        .data-item {
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .data-item label {
+            display: block;
+            font-size: 0.85rem;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        .data-item .value {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #333;
+        }
+        .data-item.highlight {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .data-item.highlight label {
+            color: rgba(255,255,255,0.8);
+        }
+        .data-item.highlight .value {
+            color: white;
+            font-size: 1.5rem;
+        }
+        .config-card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        .config-card h3 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .update-time {
+            text-align: center;
+            color: white;
+            opacity: 0.8;
+            margin-top: 20px;
+        }
+        .alert-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        .alert-badge.warning {
+            background: #ffc107;
+            color: #333;
+        }
+        .alert-badge.normal {
+            background: #28a745;
+            color: white;
+        }
+        @media (max-width: 600px) {
+            .cards {
+                grid-template-columns: 1fr;
+            }
+            .data-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>货币基金折价套利监控</h1>
+            <p>实时监控银华日利(511880)和华宝添益(511990)折价套利机会</p>
+        </header>
+
+        <div class="cards" id="fundCards">
+            <!-- 动态加载 -->
+        </div>
+
+        <div class="config-card">
+            <h3>告警配置</h3>
+            <div class="form-group">
+                <label for="threshold">年化收益率阈值 (%)</label>
+                <input type="number" id="threshold" step="0.1" value="3.0">
+            </div>
+            <button class="btn" onclick="saveThreshold()">保存阈值</button>
+            <div id="thresholdStatus" class="status" style="display:none;"></div>
+        </div>
+
+        <div class="config-card" style="margin-top: 20px;">
+            <h3>通知配置</h3>
+            <div class="form-group">
+                <label for="barkUrl">Bark URL</label>
+                <input type="text" id="barkUrl" placeholder="https://api.day.app/YOUR_KEY">
+            </div>
+            <div class="form-group">
+                <label for="serverchanKey">Server酱 Key</label>
+                <input type="text" id="serverchanKey" placeholder="SCT...">
+            </div>
+            <button class="btn" onclick="saveNotification()">保存配置</button>
+            <div id="notificationStatus" class="status" style="display:none;"></div>
+        </div>
+
+        <p class="update-time" id="updateTime">最后更新: --</p>
+    </div>
+
+    <script>
+        const FUNDS = {
+            '511880': { name: '银华日利', code: '511880' },
+            '511990': { name: '华宝添益', code: '511990' }
+        };
+        let threshold = 3.0;
+
+        async function loadData() {
+            try {
+                const resp = await fetch('/api/data');
+                const data = await resp.json();
+                renderFunds(data);
+                // 格式化更新时间
+                let timeStr = '--';
+                if (data.last_update) {
+                    const date = new Date(data.last_update);
+                    timeStr = date.toLocaleString('zh-CN', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    });
+                }
+                document.getElementById('updateTime').textContent = '最后更新: ' + timeStr;
+            } catch (e) {
+                console.error('加载数据失败:', e);
+            }
+        }
+
+function renderFunds(data) {
+            const container = document.getElementById('fundCards');
+            container.innerHTML = '';
+
+            // 使用后端返回的阈值（如果有）
+            const effectiveThreshold = data.alert_threshold || threshold;
+
+            for (const [code, fund] of Object.entries(FUNDS)) {
+                const fundData = data[code] || {};
+                const returnVal = fundData.annualized_return;
+                const isAlert = returnVal !== null && returnVal >= effectiveThreshold;
+
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `
+                    <div class="card-header">
+                        <h2>${fund.name}</h2>
+                        <span class="code">${code}</span>
+                    </div>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <label>买1价格</label>
+                            <div class="value">${fundData.bid_price?.toFixed(4) || '--'}</div>
+                        </div>
+                        <div class="data-item">
+                            <label>卖1价格</label>
+                            <div class="value">${fundData.ask_price?.toFixed(4) || '--'}</div>
+                        </div>
+                        <div class="data-item">
+                            <label>估算净值</label>
+                            <div class="value">${fundData.estimated_nav?.toFixed(4) || '--'}</div>
+                        </div>
+                        <div class="data-item">
+                            <label>占用天数</label>
+                            <div class="value">${fundData.holding_days || '--'} 天</div>
+                        </div>
+                        <div class="data-item highlight" style="grid-column: span 2;">
+                            <label>年化收益率
+                                <span class="alert-badge ${isAlert ? 'warning' : 'normal'}">
+                                    ${isAlert ? '超阈值' : '正常'}
+                                </span>
+                            </label>
+                            <div class="value">${returnVal !== null ? returnVal.toFixed(2) + '%' : '--'}</div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            }
+        }
+
+        async function loadConfig() {
+            try {
+                const resp = await fetch('/api/config/threshold');
+                const data = await resp.json();
+                threshold = data.threshold;
+                document.getElementById('threshold').value = threshold;
+            } catch (e) {
+                console.error('加载配置失败:', e);
+            }
+        }
+
+        async function saveThreshold() {
+            const val = parseFloat(document.getElementById('threshold').value);
+            const statusEl = document.getElementById('thresholdStatus');
+
+            try {
+                const resp = await fetch('/api/config/threshold', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ threshold: val })
+                });
+                const data = await resp.json();
+                threshold = val;
+                statusEl.textContent = data.message;
+                statusEl.className = 'status success';
+                statusEl.style.display = 'block';
+                loadData();
+            } catch (e) {
+                statusEl.textContent = '保存失败';
+                statusEl.className = 'status error';
+                statusEl.style.display = 'block';
+            }
+        }
+
+        async function saveNotification() {
+            const barkUrl = document.getElementById('barkUrl').value;
+            const serverchanKey = document.getElementById('serverchanKey').value;
+            const statusEl = document.getElementById('notificationStatus');
+
+            try {
+                const resp = await fetch('/api/config/notification', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bark_url: barkUrl, serverchan_key: serverchanKey })
+                });
+                const data = await resp.json();
+                statusEl.textContent = data.message;
+                statusEl.className = 'status success';
+                statusEl.style.display = 'block';
+            } catch (e) {
+                statusEl.textContent = '保存失败';
+                statusEl.className = 'status error';
+                statusEl.style.display = 'block';
+            }
+        }
+
+        // 初始化
+        loadConfig();
+        loadData();
+        setInterval(loadData, 60000);  // 每分钟刷新
+    </script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  monitor:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=货币基金折价套利监控系统
+      - DEBUG=false
+      - ALERT_THRESHOLD=${ALERT_THRESHOLD:-3.0}
+      - BARK_URL=${BARK_URL:-}
+      - SERVERCHAN_KEY=${SERVERCHAN_KEY:-}
+      - EMAIL_SMTP=${EMAIL_SMTP:-}
+      - EMAIL_PORT=${EMAIL_PORT:-587}
+      - EMAIL_USER=${EMAIL_USER:-}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD:-}
+      - EMAIL_TO=${EMAIL_TO:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
