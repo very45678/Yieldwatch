@@ -21,7 +21,7 @@ def get_http_client() -> httpx.Client:
     global _sync_client
     if _sync_client is None:
         _sync_client = httpx.Client(
-            timeout=httpx.Timeout(10.0, connect=5.0),
+            timeout=httpx.Timeout(30.0, connect=10.0),
             limits=httpx.Limits(
                 max_connections=10,
                 max_keepalive_connections=5,

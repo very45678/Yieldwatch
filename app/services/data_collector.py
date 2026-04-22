@@ -189,6 +189,7 @@ def _fetch_quote_sina(code: str) -> Optional[Dict[str, Any]]:
     resp.raise_for_status()
     resp.encoding = "gbk"
     data = resp.text
+    logger.debug(f"新浪行情响应: {data[:200] if data else 'empty'}...")
 
     if data and 'var hq_str' in data:
         # 解析数据：var hq_str_sh511880="..."
@@ -224,6 +225,7 @@ def _fetch_nav_eastmoney(code: str) -> Optional[Dict[str, Any]]:
     resp = client.get(url, headers=headers)
     resp.raise_for_status()
     text = resp.text
+    logger.debug(f"东方财富净值响应长度: {len(text)}")
 
     # 尝试解析JSONP响应
     jsonp_match = re.search(r'jsonp\((.*)\)', text)
