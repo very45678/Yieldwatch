@@ -12,8 +12,8 @@ from app.services.http_client import get_http_client
 logger = logging.getLogger(__name__)
 
 # 重试配置
-MAX_RETRIES = 3
-RETRY_DELAY = 1.0  # 秒
+MAX_RETRIES = 5
+RETRY_DELAY = 2.0  # 秒
 
 # 数据源配置
 QUOTE_SOURCES = {
