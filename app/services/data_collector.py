@@ -19,6 +19,7 @@ RETRY_DELAY = 2.0  # 秒
 QUOTE_SOURCES = {
     "eastmoney": "https://push2.eastmoney.com/api/qt/stock/get",
     "sina": "https://hq.sinajs.cn/list=sh{code}",
+    "yahoo": "https://query1.finance.yahoo.com/v8/finance/chart/{code}",
 }
 
 NAV_SOURCES = {
@@ -49,6 +50,11 @@ def fetch_quote(code: str) -> Optional[Dict[str, Any]]:
     if result:
         return result
 
+    # 尝试 Yahoo Finance 数据源（国际访问友好）
+    result = _fetch_with_retry(_fetch_quote_yahoo, code, "Yahoo行情")
+    if result:
+        return result
+
     logger.warning(f"获取 {code} 行情数据失败，所有数据源均不可用")
     return None
 
@@ -70,6 +76,11 @@ def fetch_nav(code: str) -> Optional[Dict[str, Any]]:
         return result
 
     result = _fetch_with_retry(_fetch_nav_fundf10, code, "FundF10净值")
+    if result:
+        return result
+
+    # 尝试 Yahoo Finance 数据源（国际访问友好）
+    result = _fetch_with_retry(_fetch_nav_yahoo, code, "Yahoo净值")
     if result:
         return result
 
@@ -282,6 +293,61 @@ def _fetch_nav_fundf10(code: str) -> Optional[Dict[str, Any]]:
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.debug(f"FundF10 JSON解析失败: {e}")
 
+    return None
+
+
+def _fetch_quote_yahoo(code: str) -> Optional[Dict[str, Any]]:
+    """从 Yahoo Finance 获取行情数据（国际数据源）"""
+    # Yahoo Finance 上中国 ETF 代码格式：511990.SH, 511880.SH
+    yahoo_code = f"{code}.SS"
+    url = QUOTE_SOURCES["yahoo"].format(code=yahoo_code)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    }
+
+    client = get_http_client()
+    resp = client.get(url, headers=headers)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if data and "chart" in data and data["chart"]["result"]:
+        result = data["chart"]["result"][0]
+        meta = result.get("meta", {})
+        price = meta.get("regularMarketPrice")
+        if price:
+            return {
+                "bid": price,
+                "ask": price,
+                "price": price,
+                "timestamp": datetime.now().isoformat(),
+            }
+    return None
+
+
+def _fetch_nav_yahoo(code: str) -> Optional[Dict[str, Any]]:
+    """从 Yahoo Finance 获取净值数据（国际数据源）"""
+    # Yahoo Finance 上中国 ETF 代码格式：511990.SS, 511880.SS
+    yahoo_code = f"{code}.SS"
+    url = QUOTE_SOURCES["yahoo"].format(code=yahoo_code)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    }
+
+    client = get_http_client()
+    resp = client.get(url, headers=headers)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if data and "chart" in data and data["chart"]["result"]:
+        result = data["chart"]["result"][0]
+        meta = result.get("meta", {})
+        price = meta.get("regularMarketPrice")
+        # 货币基金净值日期（Yahoo 不提供独立净值日期，使用交易日）
+        if price:
+            return {
+                "nav": price,
+                "date": datetime.now().strftime("%Y-%m-%d"),
+            }
     return None
 
 
