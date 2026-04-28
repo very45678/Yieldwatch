@@ -1,0 +1,18 @@
+#!/bin/bash
+# 腾讯云 SCF 自定义运行时 Bootstrap
+# SCF 要求监听 9000 端口
+
+cd /opt
+
+# 设置 Python 路径（含 Layer 依赖）
+export PYTHONPATH=/opt/python:/opt:$PYTHONPATH
+
+# 启动 FastAPI 应用（Web 函数版，无调度器）
+exec python3 -c "
+import sys
+sys.path.insert(0, '/opt')
+sys.path.insert(0, '/opt/python')
+from app.main_web import app
+import uvicorn
+uvicorn.run(app, host='0.0.0.0', port=9000)
+"

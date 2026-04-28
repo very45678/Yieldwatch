@@ -1,0 +1,131 @@
+# 腾讯云 Serverless Framework 配置
+# 部署命令: sls deploy --all
+
+component: scf
+name: money-fund-monitor
+org: default
+app: money-fund-monitor
+stage: prod
+
+# ============ Web 函数（API + Dashboard） ============
+money-fund-monitor-web:
+  component: scf
+  inputs:
+    name: money-fund-monitor-web
+    src:
+      src: ./
+      exclude:
+        - .git/**
+        - .env
+        - .s/**
+        - .serverless/**
+        - node_modules/**
+        - layer/**
+        - deploy/**
+        - deps/**
+        - scf/timer/**
+        - tests/**
+        - "__pycache__/**"
+        - "*.zip"
+        - s.yaml
+        - render.yaml
+        - Dockerfile
+        - docker-compose.yml
+        - DEPLOY_ALIYUN.md
+    runtime: CustomRuntime
+    handler: scf/web/bootstrap
+    description: 货币基金折价套利监控 - Web API
+    memorySize: 256
+    timeout: 60
+    initTimeout: 30
+    region: ap-guangzhou
+    environmentVariables:
+      APP_NAME: "货币基金折价套利监控系统"
+      DEBUG: "false"
+      ALERT_THRESHOLD: "3.0"
+      REDIS_PORT: "6379"
+      ALIBABA_CLOUD_ACCESS_KEY_ID: ${env:ALIBABA_CLOUD_ACCESS_KEY_ID}
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: ${env:ALIBABA_CLOUD_ACCESS_KEY_SECRET}
+      ALIBABA_CLOUD_ACCOUNT_ID: ${env:ALIBABA_CLOUD_ACCOUNT_ID}
+      TENCENT_SECRET_ID: ${env:TENCENT_SECRET_ID}
+      TENCENT_SECRET_KEY: ${env:TENCENT_SECRET_KEY}
+      TENCENT_APP_ID: ${env:TENCENT_APP_ID}
+      BARK_URL: ${env:BARK_URL}
+      SERVERCHAN_KEY: ${env:SERVERCHAN_KEY}
+      EMAIL_SMTP: ${env:EMAIL_SMTP}
+      EMAIL_PORT: "587"
+      EMAIL_USER: ${env:EMAIL_USER}
+      EMAIL_PASSWORD: ${env:EMAIL_PASSWORD}
+      EMAIL_TO: ${env:EMAIL_TO}
+    events:
+      - apigw:
+          name: money-fund-monitor-api
+          parameters:
+            protocols:
+              - http
+              - https
+            serviceName: money-fund-monitor
+            description: 货币基金折价套利监控 API
+            environment: release
+            endpoints:
+              - path: /
+                method: ANY
+              - path: /{proxy+}
+                method: ANY
+
+# ============ 定时函数（数据采集 + 通知） ============
+money-fund-monitor-timer:
+  component: scf
+  inputs:
+    name: money-fund-monitor-timer
+    src:
+      src: ./
+      exclude:
+        - .git/**
+        - .env
+        - .s/**
+        - .serverless/**
+        - node_modules/**
+        - layer/**
+        - deploy/**
+        - deps/**
+        - scf/web/**
+        - app/templates/**
+        - app/static/**
+        - tests/**
+        - "__pycache__/**"
+        - "*.zip"
+        - s.yaml
+        - render.yaml
+        - Dockerfile
+        - docker-compose.yml
+        - DEPLOY_ALIYUN.md
+    runtime: Python3.10
+    handler: scf/timer/timer_handler.main_handler
+    description: 货币基金折价套利监控 - 定时数据采集
+    memorySize: 128
+    timeout: 60
+    region: ap-guangzhou
+    environmentVariables:
+      APP_NAME: "货币基金折价套利监控系统"
+      DEBUG: "false"
+      ALERT_THRESHOLD: "3.0"
+      ALIBABA_CLOUD_ACCESS_KEY_ID: ${env:ALIBABA_CLOUD_ACCESS_KEY_ID}
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: ${env:ALIBABA_CLOUD_ACCESS_KEY_SECRET}
+      ALIBABA_CLOUD_ACCOUNT_ID: ${env:ALIBABA_CLOUD_ACCOUNT_ID}
+      TENCENT_SECRET_ID: ${env:TENCENT_SECRET_ID}
+      TENCENT_SECRET_KEY: ${env:TENCENT_SECRET_KEY}
+      TENCENT_APP_ID: ${env:TENCENT_APP_ID}
+      BARK_URL: ${env:BARK_URL}
+      SERVERCHAN_KEY: ${env:SERVERCHAN_KEY}
+      EMAIL_SMTP: ${env:EMAIL_SMTP}
+      EMAIL_PORT: "587"
+      EMAIL_USER: ${env:EMAIL_USER}
+      EMAIL_PASSWORD: ${env:EMAIL_PASSWORD}
+      EMAIL_TO: ${env:EMAIL_TO}
+    events:
+      - timer:
+          name: fund-monitor-5min
+          description: 交易日每5分钟采集数据
+          cronExpression: "0 */5 * * * * *"
+          enable: true

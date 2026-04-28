@@ -20,9 +20,6 @@ def scheduled_job():
 
 def start_scheduler():
     """启动调度器"""
-    # 启动时立即执行一次
-    scheduled_job()
-
     # 交易日 9:30-15:00 每5分钟执行一次
     # 使用 cron 表达式：周一到周五，每5分钟
     scheduler.add_job(

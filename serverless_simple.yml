@@ -1,0 +1,39 @@
+component: scf
+name: money-fund-monitor-test
+org: default
+app: money-fund-monitor
+stage: prod
+
+web:
+  component: scf
+  inputs:
+    name: money-fund-monitor-web
+    src:
+      src: ./
+      exclude:
+        - .git/**
+        - .env
+        - .s/**
+        - .serverless/**
+        - node_modules/**
+        - layer/**
+        - deploy/**
+        - deps/**
+        - scf/timer/**
+        - tests/**
+        - "__pycache__/**"
+        - "*.zip"
+        - s.yaml
+        - render.yaml
+        - Dockerfile
+        - docker-compose.yml
+        - DEPLOY_*.md
+    runtime: CustomRuntime
+    handler: scf/web/bootstrap
+    description: 货币基金折价套利监控 - Web API
+    memorySize: 256
+    timeout: 60
+    initTimeout: 30
+    region: ap-guangzhou
+    environmentVariables:
+      APP_NAME: "货币基金折价套利监控系统"

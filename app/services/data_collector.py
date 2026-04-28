@@ -6,45 +6,154 @@ import re
 import json
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime
+import pandas as pd
 
 from app.services.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
-# 重试配置
-MAX_RETRIES = 5
-RETRY_DELAY = 2.0  # 秒
+# AKShare 全市场 ETF 行情缓存（一次拉取所有 ETF，避免重复请求）
+_akshare_etf_spot_cache: Dict[str, Any] = {"data": None, "timestamp": 0.0}
+AKSHARE_ETF_CACHE_TTL = 30  # 缓存有效期（秒）
 
-# 数据源配置
+# AKShare 懒加载状态
+_akshare_available = None  # None=未检测, True=可用, False=不可用
+
+
+def _ensure_akshare() -> bool:
+    """检测 AKShare 是否可用（仅检测一次）"""
+    global _akshare_available
+    if _akshare_available is not None:
+        return _akshare_available
+    try:
+        import akshare as _
+        _akshare_available = True
+        logger.info("AKShare 可用，将作为主数据源")
+    except ImportError:
+        _akshare_available = False
+        logger.warning("AKShare 不可用，将使用直接 HTTP 数据源")
+    return _akshare_available
+
+
+def _get_akshare_etf_spot() -> Optional[Any]:
+    """获取带缓存的全市场 ETF 实时行情（来自 AKShare）"""
+    if not _ensure_akshare():
+        return None
+    try:
+        import akshare as ak
+        import time as time_module
+        now = time_module.time()
+        if _akshare_etf_spot_cache["data"] is None or (now - _akshare_etf_spot_cache["timestamp"]) > AKSHARE_ETF_CACHE_TTL:
+            logger.debug("从 AKShare 获取全市场 ETF 行情")
+            _akshare_etf_spot_cache["data"] = ak.fund_etf_spot_em()
+            _akshare_etf_spot_cache["timestamp"] = now
+        return _akshare_etf_spot_cache["data"]
+    except Exception as e:
+        logger.warning(f"AKShare ETF 行情获取失败: {e}")
+        return None
+
+
+def _get_quote_akshare(code: str) -> Optional[Dict[str, Any]]:
+    """从 AKShare 获取单只 ETF 行情（买一/卖一/最新价）"""
+    df = _get_akshare_etf_spot()
+    if df is None:
+        return None
+    try:
+        code_str = str(code).zfill(6)
+        row = df[df["代码"] == code_str]
+        if row.empty:
+            logger.debug(f"AKShare 未找到基金代码 {code}")
+            return None
+        bid = row["买一"].values[0]
+        ask = row["卖一"].values[0]
+        price = row["最新价"].values[0]
+        if bid is None or ask is None or price is None:
+            return None
+        if float(bid) <= 0:
+            return None
+        return {
+            "bid": float(bid),
+            "ask": float(ask),
+            "price": float(price),
+            "source": "akshare",
+            "timestamp": datetime.now().isoformat(),
+        }
+    except (KeyError, IndexError, ValueError) as e:
+        logger.warning(f"AKShare 解析基金 {code} 数据失败: {e}")
+        return None
+
+
+def _get_nav_akshare(code: str) -> Optional[Dict[str, Any]]:
+    """从 AKShare 获取单只 ETF 历史净值（最新一条）"""
+    if not _ensure_akshare():
+        return None
+    try:
+        import akshare as ak
+        from datetime import datetime, timedelta
+        code_str = str(code).zfill(6)
+        # 只拉取最近 30 天数据，避免遍历大量历史分页（ETF 净值每日更新，30天足够）
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=30)
+        df = ak.fund_etf_fund_info_em(
+            fund=code_str,
+            start_date=start_date.strftime("%Y%m%d"),
+            end_date=end_date.strftime("%Y%m%d"),
+        )
+        if df is None or df.empty:
+            logger.debug(f"AKShare 未找到基金代码 {code} 的净值数据")
+            return None
+        latest = df.iloc[-1]  # API 返回升序数据，取最后一条为最新
+        nav = latest.get("单位净值")
+        date = latest.get("净值日期")
+        if nav is None or pd.isna(nav):
+            return None
+        if date is None or pd.isna(date):
+            return None
+        if isinstance(date, str):
+            date_str = date[:10] if len(date) > 10 else date
+        else:
+            date_str = date.strftime("%Y-%m-%d")
+        return {
+            "nav": float(nav),
+            "date": date_str,
+            "source": "akshare",
+        }
+    except Exception as e:
+        logger.warning(f"AKShare 获取基金 {code} 净值失败: {e}")
+        return None
+
+MAX_RETRIES = 5
+RETRY_DELAY = 1.0
+
 QUOTE_SOURCES = {
-    "eastmoney": "https://push2.eastmoney.com/api/qt/stock/get",
     "sina": "https://hq.sinajs.cn/list=sh{code}",
+    "eastmoney": "https://push2.eastmoney.com/api/qt/stock/get",
+    "tencent": "https://qt.gtimg.cn/q=sh{code}",
 }
 
 NAV_SOURCES = {
-    "eastmoney": "https://fund.eastmoney.com/pingzhl{code}.html",
-    "fundf10": "https://fundf10.eastmoney.com/jjjz_{code}.html",
+    "eastmoney_api": "https://api.fund.eastmoney.com/f10/lsjz",
+    "eastmoney_f10": "https://fundf10.eastmoney.com/FundArchivesDatas.aspx",
 }
 
 
 def fetch_quote(code: str) -> Optional[Dict[str, Any]]:
-    """
-    获取基金行情数据（买1/卖1价格）
+    # 主数据源：AKShare
+    result = _fetch_with_retry(_get_quote_akshare, code, "AKShare行情")
+    if result:
+        return result
 
-    按优先级依次尝试数据源，直到成功获取数据
-
-    Args:
-        code: 基金代码
-
-    Returns:
-        包含bid、ask、price、timestamp的字典，或None
-    """
-    # 优先使用新浪数据源（买卖盘数据准确）
+    # 备用数据源 1：新浪财经
     result = _fetch_with_retry(_fetch_quote_sina, code, "新浪行情")
     if result:
         return result
 
-    # 尝试东方财富数据源
+    # 备用数据源 2：腾讯行情
+    result = _fetch_with_retry(_fetch_quote_tencent, code, "腾讯行情")
+    if result:
+        return result
+
+    # 备用数据源 3：东方财富
     result = _fetch_with_retry(_fetch_quote_eastmoney, code, "东方财富行情")
     if result:
         return result
@@ -54,22 +163,18 @@ def fetch_quote(code: str) -> Optional[Dict[str, Any]]:
 
 
 def fetch_nav(code: str) -> Optional[Dict[str, Any]]:
-    """
-    获取基金净值数据
-
-    按优先级依次尝试数据源，直到成功获取数据
-
-    Args:
-        code: 基金代码
-
-    Returns:
-        包含nav、date的字典，或None
-    """
-    result = _fetch_with_retry(_fetch_nav_eastmoney, code, "东方财富净值")
+    # 主数据源：AKShare
+    result = _fetch_with_retry(_get_nav_akshare, code, "AKShare净值")
     if result:
         return result
 
-    result = _fetch_with_retry(_fetch_nav_fundf10, code, "FundF10净值")
+    # 备用数据源 1：东方财富净值 API
+    result = _fetch_with_retry(_fetch_nav_eastmoney, code, "东方财富净值API")
+    if result:
+        return result
+
+    # 备用数据源 2：东方财富 F10 页面
+    result = _fetch_with_retry(_fetch_nav_fundf10, code, "东方财富F10净值")
     if result:
         return result
 
@@ -82,17 +187,6 @@ def _fetch_with_retry(
     code: str,
     source_name: str
 ) -> Optional[Dict[str, Any]]:
-    """
-    带重试机制的获取函数
-
-    Args:
-        fetch_func: 数据获取函数
-        code: 基金代码
-        source_name: 数据源名称（用于日志）
-
-    Returns:
-        获取结果或 None
-    """
     last_error: Optional[Exception] = None
 
     for attempt in range(MAX_RETRIES):
@@ -139,17 +233,76 @@ def _fetch_with_retry(
     return None
 
 
-def _fetch_quote_eastmoney(code: str) -> Optional[Dict[str, Any]]:
-    """
-    从东方财富获取行情数据
+def _fetch_quote_sina(code: str) -> Optional[Dict[str, Any]]:
+    url = QUOTE_SOURCES["sina"].format(code=code)
+    headers = {
+        "Referer": "https://finance.sina.com.cn/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
 
-    注意：东方财富API只返回当前价，无买卖盘数据
-    """
+    client = get_http_client()
+    resp = client.get(url, headers=headers)
+    resp.raise_for_status()
+    resp.encoding = "gbk"
+    data = resp.text
+
+    if data and 'var hq_str' in data:
+        match = re.search(r'="([^"]+)"', data)
+        if match:
+            parts = match.group(1).split(",")
+            if len(parts) >= 30:
+                bid_price = parts[11]
+                ask_price = parts[21]
+                current_price = parts[3]
+
+                if bid_price and ask_price and float(bid_price) > 0:
+                    return {
+                        "bid": float(bid_price),
+                        "ask": float(ask_price),
+                        "price": float(current_price) if current_price else None,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+    return None
+
+
+def _fetch_quote_tencent(code: str) -> Optional[Dict[str, Any]]:
+    url = QUOTE_SOURCES["tencent"].format(code=code)
+    headers = {
+        "Referer": "https://gu.qq.com/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+
+    client = get_http_client()
+    resp = client.get(url, headers=headers)
+    resp.raise_for_status()
+    resp.encoding = "gbk"
+    data = resp.text
+
+    if data and f"v_sh{code}" in data:
+        match = re.search(r'="([^"]+)"', data)
+        if match:
+            parts = match.group(1).split("~")
+            if len(parts) >= 10:
+                current_price = parts[3]
+                bid_price = parts[9]
+                ask_price = parts[10]
+
+                if current_price and float(current_price) > 0:
+                    return {
+                        "bid": float(bid_price) if bid_price and float(bid_price) > 0 else float(current_price),
+                        "ask": float(ask_price) if ask_price and float(ask_price) > 0 else float(current_price),
+                        "price": float(current_price),
+                        "timestamp": datetime.now().isoformat(),
+                    }
+    return None
+
+
+def _fetch_quote_eastmoney(code: str) -> Optional[Dict[str, Any]]:
     secid = f"1.{code}"
     url = QUOTE_SOURCES["eastmoney"]
     params = {
         "secid": secid,
-        "fields": "f43,f44,f45,f46",  # 最新价、最高、最低、今开
+        "fields": "f43,f44,f45,f46",
         "ut": "fa5fd1943c7b386f172d6893dbfba10b",
     }
     headers = {
@@ -166,131 +319,87 @@ def _fetch_quote_eastmoney(code: str) -> Optional[Dict[str, Any]]:
         current_price = d.get("f43")
 
         if current_price:
-            # 东方财富不提供买卖盘数据，使用当前价近似
             price = current_price / 1000
             return {
-                "bid": price,  # 近似
-                "ask": price,  # 近似
+                "bid": price,
+                "ask": price,
                 "price": price,
                 "timestamp": datetime.now().isoformat(),
             }
     return None
 
 
-def _fetch_quote_sina(code: str) -> Optional[Dict[str, Any]]:
-    """从新浪获取行情数据"""
-    url = QUOTE_SOURCES["sina"].format(code=code)
-    headers = {
-        "Referer": "https://finance.sina.com.cn/",
-    }
-
-    client = get_http_client()
-    resp = client.get(url, headers=headers)
-    resp.raise_for_status()
-    resp.encoding = "gbk"
-    data = resp.text
-    logger.debug(f"新浪行情响应: {data[:200] if data else 'empty'}...")
-
-    if data and 'var hq_str' in data:
-        # 解析数据：var hq_str_sh511880="..."
-        match = re.search(r'="([^"]+)"', data)
-        if match:
-            parts = match.group(1).split(",")
-            if len(parts) >= 30:
-                # 新浪数据格式：
-                # 索引 0: 名称, 1: 今开, 2: 昨收, 3: 当前价
-                # 索引 11: 买1价, 21: 卖1价
-                bid_price = parts[11]
-                ask_price = parts[21]
-                current_price = parts[3]
-
-                if bid_price and ask_price and float(bid_price) > 0:
-                    return {
-                        "bid": float(bid_price),
-                        "ask": float(ask_price),
-                        "price": float(current_price) if current_price else None,
-                        "timestamp": datetime.now().isoformat(),
-                    }
-    return None
-
-
 def _fetch_nav_eastmoney(code: str) -> Optional[Dict[str, Any]]:
-    """从东方财富获取货币基金净值数据"""
-    url = f"https://fundgz.eastmoney.com/pingzhl{code}.html"
+    url = NAV_SOURCES["eastmoney_api"]
     headers = {
         "Referer": "https://fund.eastmoney.com/",
     }
+    params = {
+        "fundCode": code,
+        "pageIndex": 1,
+        "pageSize": 1,
+    }
 
     client = get_http_client()
-    resp = client.get(url, headers=headers)
+    resp = client.get(url, params=params, headers=headers)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if data and "Data" in data and data["Data"]:
+        lsjz_list = data["Data"].get("LSJZList")
+        if lsjz_list and len(lsjz_list) > 0:
+            latest = lsjz_list[0]
+            nav = latest.get("DWJZ")
+            date = latest.get("FSRQ")
+            if nav and date:
+                return {
+                    "nav": float(nav),
+                    "date": date,
+                }
+
+    return None
+
+
+def _fetch_nav_fundf10(code: str) -> Optional[Dict[str, Any]]:
+    url = NAV_SOURCES["eastmoney_f10"]
+    headers = {
+        "Referer": f"https://fundf10.eastmoney.com/jjjz_{code}.html",
+    }
+    params = {
+        "type": "lsjz",
+        "code": code,
+        "per": 1,
+        "page": 1,
+    }
+
+    client = get_http_client()
+    resp = client.get(url, params=params, headers=headers)
     resp.raise_for_status()
     text = resp.text
-    logger.debug(f"东方财富净值响应长度: {len(text)}")
 
-    # 尝试解析JSONP响应
-    jsonp_match = re.search(r'jsonp\((.*)\)', text)
-    if jsonp_match:
-        try:
-            data = json.loads(jsonp_match.group(1))
-            if "Data" in data and data["Data"]:
-                latest = data["Data"][0]
-                nav = latest.get("DWJZ")
-                date = latest.get("FSRQ")
-                if nav and date:
-                    return {
-                        "nav": float(nav),
-                        "date": date,
-                    }
-        except json.JSONDecodeError as e:
-            logger.debug(f"JSONP解析失败: {e}")
-
-    # 备用：从HTML解析
-    nav_match = re.search(r'单位净值[：:]\s*([\d.]+)', text)
-    date_match = re.search(r'净值日期[：:]\s*(\d{4}-\d{2}-\d{2})', text)
+    nav_match = re.search(r'class="tor bold">([\d.]+)', text)
+    date_match = re.search(r'class="tdxdate">(\d{4}-\d{2}-\d{2})', text)
     if nav_match and date_match:
         return {
             "nav": float(nav_match.group(1)),
             "date": date_match.group(1),
         }
 
-    return None
-
-
-def _fetch_nav_fundf10(code: str) -> Optional[Dict[str, Any]]:
-    """从FundF10获取净值数据（备用源）"""
-    url = f"https://fundf10.eastmoney.com/jjjz_{code}.html"
-    headers = {
-        "Referer": "https://fund.eastmoney.com/",
-    }
-
-    client = get_http_client()
-    resp = client.get(url, headers=headers)
-    resp.raise_for_status()
-    text = resp.text
-
-    # 尝试从页面内嵌的JSON数据获取
-    json_match = re.search(r'data:\s*(\[.*?\])', text, re.DOTALL)
-    if json_match:
+    nav_match2 = re.search(r'>([\d]{2,3}\.\d+)<', text)
+    date_match2 = re.search(r'(\d{4}-\d{2}-\d{2})', text)
+    if nav_match2 and date_match2:
         try:
-            data = json.loads(json_match.group(1))
-            if data and len(data) > 0:
-                latest = data[0]
-                return {
-                    "nav": float(latest.get("DWJZ", 0)),
-                    "date": latest.get("FSRQ", ""),
-                }
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            logger.debug(f"FundF10 JSON解析失败: {e}")
+            return {
+                "nav": float(nav_match2.group(1)),
+                "date": date_match2.group(1),
+            }
+        except ValueError:
+            pass
 
     return None
 
 
 def fetch_nav_yhj(code: str) -> Optional[Dict[str, Any]]:
-    """
-    获取货币基金净值数据（备用）
-
-    对于货币ETF，净值等于最新价
-    """
     quote = fetch_quote(code)
     if quote and quote.get("price"):
         return {

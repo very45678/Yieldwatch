@@ -1,14 +1,11 @@
 __pycache__/
 *.py[cod]
-*$py.class
 .venv/
 venv/
 .env
 .idea/
 .vscode/
-*.egg-info/
-.pytest_cache/
-.deploy/
+.git/
 .claude/
 .serverless/
 *.dist-info/
@@ -32,3 +29,7 @@ httpx/
 idna/
 apscheduler/
 anyio/
+README.md
+.gitignore
+render.yaml
+docker-compose.yml
