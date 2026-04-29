@@ -2,20 +2,15 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# 设置环境变量
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+# 使用国内镜像加速
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 COPY requirements.txt .
-# 分阶段安装，先安装核心依赖，再安装 akshare（更大更慢）
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir fastapi uvicorn httpx apscheduler pydantic pydantic-settings jinja2 chinesecalendar redis && \
-    pip install --no-cache-dir akshare
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制应用代码
 COPY app/ ./app/
 
 EXPOSE 10000
 
-# 启动命令，增加超时设置
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "10000", "--timeout-keep-alive", "5"]
+# 支持环境变量 PORT，Zeabur 会自动设置
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}

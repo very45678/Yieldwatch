@@ -18,7 +18,7 @@ async def index(request: Request):
     try:
         data = await get_fund_data_async()
     except Exception as e:
-        logger.warning(f"获取数据失败: {e}")
+        logger.error(f"获取数据失败: {e}")
         data = {}
     return templates.TemplateResponse(
         "index.html",
@@ -31,7 +31,7 @@ async def get_data():
     try:
         update_fund_data()
     except Exception as e:
-        logger.warning(f"数据更新失败: {e}")
+        logger.error(f"数据更新失败: {e}")
     data = await get_fund_data_async()
     data["alert_threshold"] = settings.alert_threshold
     return data
@@ -42,7 +42,7 @@ async def refresh_data():
     try:
         update_fund_data()
     except Exception as e:
-        logger.warning(f"数据刷新失败: {e}")
+        logger.error(f"数据刷新失败: {e}")
     data = await get_fund_data_async()
     data["alert_threshold"] = settings.alert_threshold
     return data

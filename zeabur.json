@@ -1,0 +1,13 @@
+{
+  "name": "yieldwatch",
+  "services": [
+    {
+      "name": "web",
+      "type": "dockerfile",
+      "dockerfile": "Dockerfile",
+      "env": {
+        "ALERT_THRESHOLD": "3.0"
+      }
+    }
+  ]
+}

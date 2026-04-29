@@ -1,5 +1,4 @@
 """数据采集器"""
-import os
 import httpx
 import time
 import logging
@@ -7,6 +6,7 @@ import re
 import json
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime
+import pandas as pd
 
 from app.services.http_client import get_http_client
 
@@ -19,26 +19,15 @@ AKSHARE_ETF_CACHE_TTL = 30  # 缓存有效期（秒）
 # AKShare 懒加载状态
 _akshare_available = None  # None=未检测, True=可用, False=不可用
 
-# 在服务器环境中禁用 AKShare，避免 ASGI 干扰和超时问题
-_DISABLE_AKSHARE = os.getenv("DISABLE_AKSHARE", "0") == "1"
-
 
 def _ensure_akshare() -> bool:
     """检测 AKShare 是否可用（仅检测一次）"""
     global _akshare_available
     if _akshare_available is not None:
         return _akshare_available
-    if _DISABLE_AKSHARE:
-        _akshare_available = False
-        logger.info("AKShare 被环境变量禁用，使用 HTTP 数据源")
-        return _akshare_available
-    try:
-        import akshare as _
-        _akshare_available = True
-        logger.info("AKShare 可用，将作为主数据源")
-    except ImportError:
-        _akshare_available = False
-        logger.warning("AKShare 不可用，将使用直接 HTTP 数据源")
+    # 禁用 AKShare 主数据源，避免 ASGI 兼容性问题
+    _akshare_available = False
+    logger.warning("AKShare 已禁用，使用直接 HTTP 数据源")
     return _akshare_available
 
 
@@ -112,9 +101,9 @@ def _get_nav_akshare(code: str) -> Optional[Dict[str, Any]]:
         latest = df.iloc[-1]  # API 返回升序数据，取最后一条为最新
         nav = latest.get("单位净值")
         date = latest.get("净值日期")
-        if nav is None or (isinstance(nav, float) and nav != nav):  # NaN check
+        if nav is None or pd.isna(nav):
             return None
-        if date is None or (isinstance(date, float) and date != date):  # NaN check
+        if date is None or pd.isna(date):
             return None
         if isinstance(date, str):
             date_str = date[:10] if len(date) > 10 else date
@@ -202,6 +191,8 @@ def _fetch_with_retry(
             if result:
                 logger.debug(f"从 {source_name} 获取 {code} 数据成功")
                 return result
+            # 返回 None 表示数据源不可用，立即尝试下一个
+            return None
         except httpx.TimeoutException as e:
             last_error = e
             logger.warning(
