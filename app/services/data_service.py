@@ -120,14 +120,14 @@ class FundDataService:
 
             self._data["last_update"] = datetime.now().isoformat()
 
-        # 异步保存到 Redis（兼容已有事件循环的场景）
+        # 异步保存到 Redis（忽略失败，不阻塞主流程）
         try:
             loop = asyncio.get_running_loop()
             # 已在事件循环中，使用 create_task 避免阻塞
             asyncio.create_task(self._save_to_redis_async())
         except RuntimeError:
-            # 不在事件循环中，使用 asyncio.run
-            asyncio.run(self._save_to_redis_async())
+            # 不在事件循环中，不执行异步保存（避免嵌套事件循环问题）
+            pass
         except Exception as e:
             logger.warning(f"Redis 异步保存失败: {e}")
 

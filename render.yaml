@@ -4,10 +4,13 @@ render:
     runtime: docker
     plan: free
     healthCheckPath: /health
+    healthCheckInterval: 30s
+    healthCheckTimeout: 60s
+    healthCheckRetries: 5
     envVars:
       - key: ALERT_THRESHOLD
         sync: false
         value: "3.0"
-      - key: PYTHON_VERSION
+      - key: PYTHONUNBUFFERED
         sync: false
-        value: "3.10.13"
+        value: "1"
